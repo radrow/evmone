@@ -118,33 +118,27 @@ PrecompileAnalysis internal_expmod_gas(
     const auto mod_len256 = intx::be::unsafe::load<intx::uint256>(&input_header[64]);
 
     if (base_len256 == 0 && mod_len256 == 0)
-    {
         return {min_gas, 0};
-    }
 
-    if (intx::count_significant_words(base_len256) > 1 ||
-        intx::count_significant_words(exp_len256) > 1 ||
-        intx::count_significant_words(mod_len256) > 1)
-    {
+    const auto checksum = base_len256 | exp_len256 | mod_len256;
+    const auto check2 = checksum[3] | checksum[2] | checksum[1];
+
+    if (check2 != 0)
         return {GasCostMax, 0};
-    }
-
-    const auto base_len64 = base_len256[0];
-    const auto exp_len64 = exp_len256[0];
 
     bytes input;
     input.assign(input_data + sizeof(input_header),
         input_size < sizeof(input_header) ? 0 : (input_size - sizeof(input_header)));
     intx::uint256 exp_head{0};  // first 32 bytes of the exponent
-    if (input.length() > base_len64)
+    if (input.length() > base_len256)
     {
-        input.erase(0, static_cast<size_t>(base_len64));
+        input.erase(0, static_cast<size_t>(base_len256));
         if (input.size() < 3 * 32)
             input.resize(3 * 32);
-        if (exp_len64 < 32)
+        if (exp_len256 < 32)
         {
-            input.erase(static_cast<size_t>(exp_len64));
-            input.insert(0, 32 - static_cast<size_t>(exp_len64), '\0');
+            input.erase(static_cast<size_t>(exp_len256));
+            input.insert(0, 32 - static_cast<size_t>(exp_len256), '\0');
         }
         exp_head = intx::be::unsafe::load<intx::uint256>(input.data());
     }
