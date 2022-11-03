@@ -107,7 +107,7 @@ intx::uint256 mult_complexity_eip2565(const intx::uint256& max_length) noexcept
 PrecompileAnalysis internal_expmod_gas(
     const uint8_t* input_data, size_t input_size, evmc_revision rev) noexcept
 {
-    static constexpr size_t input_header_required_size = 3 * 32;
+    static constexpr size_t input_header_required_size = 3 * sizeof(intx::uint256);
     const int64_t min_gas = rev < EVMC_BERLIN ? 0 : 200;
 
     uint8_t input_header[input_header_required_size]{};
@@ -124,19 +124,34 @@ PrecompileAnalysis internal_expmod_gas(
     if (base_len > len_limit || exp_len > len_limit || mod_len > len_limit)
         return {GasCostMax, 0};
 
+
+    // uint8_t input_exp_head[sizeof(intx::uint256)]{};
+
+    // const auto offset = sizeof(input_header) + base_len;
+    // if (offset < input_size)
+    // {
+    //     const auto end = offset + sizeof(input_exp_head);
+    //     // const auto s = (end > input_size)
+    //     size_t s;
+    //     if (end > input_size)
+    //         s = input_size - static_cast<size_t>(offset);
+    //     else
+    //         s = sizeof(input_exp_head);
+    //     std::copy_n(&input_data[static_cast<size_t>(offset)], s, input_exp_head);
+    // }
+
+    // const intx::uint256 exp_head = intx::be::unsafe::load<intx::uint256>(input_exp_head);
+
+
+    intx::uint256 exp_head;
     bytes input;
     input.assign(input_data + sizeof(input_header),
         input_size < sizeof(input_header) ? 0 : (input_size - sizeof(input_header)));
 
-
-    intx::uint256 exp_head{0};  // first 32 bytes of the exponent
-
-
     if (input.length() > base_len)
     {
         input.erase(0, static_cast<size_t>(base_len));
-        if (input.size() < 3 * 32)
-            input.resize(3 * 32);
+        input.resize(32);
         if (exp_len < 32)
         {
             input.erase(static_cast<size_t>(exp_len));
