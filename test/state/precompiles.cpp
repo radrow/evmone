@@ -125,40 +125,41 @@ PrecompileAnalysis internal_expmod_gas(
         return {GasCostMax, 0};
 
 
-    // uint8_t input_exp_head[sizeof(intx::uint256)]{};
+    uint8_t input_exp_head[sizeof(intx::uint256)]{};
 
-    // const auto offset = sizeof(input_header) + base_len;
-    // if (offset < input_size)
-    // {
-    //     const auto end = offset + sizeof(input_exp_head);
-    //     // const auto s = (end > input_size)
-    //     size_t s;
-    //     if (end > input_size)
-    //         s = input_size - static_cast<size_t>(offset);
-    //     else
-    //         s = sizeof(input_exp_head);
-    //     std::copy_n(&input_data[static_cast<size_t>(offset)], s, input_exp_head);
-    // }
-
-    // const intx::uint256 exp_head = intx::be::unsafe::load<intx::uint256>(input_exp_head);
-
-
-    intx::uint256 exp_head;
-    bytes input;
-    input.assign(input_data + sizeof(input_header),
-        input_size < sizeof(input_header) ? 0 : (input_size - sizeof(input_header)));
-
-    if (input.length() > base_len)
+    const auto offset = sizeof(input_header) + base_len;
+    if (offset < input_size)
     {
-        input.erase(0, static_cast<size_t>(base_len));
-        input.resize(32);
-        if (exp_len < 32)
-        {
-            input.erase(static_cast<size_t>(exp_len));
-            input.insert(0, 32 - static_cast<size_t>(exp_len), '\0');
-        }
-        exp_head = intx::be::unsafe::load<intx::uint256>(input.data());
+        const auto exp_head_len = std::min(sizeof(input_exp_head), static_cast<size_t>(exp_len));
+        const auto end = offset + exp_head_len;
+        // const auto s = (end > input_size)
+        size_t s;
+        if (end > input_size)
+            s = input_size - static_cast<size_t>(offset);
+        else
+            s = exp_head_len;
+        std::copy_n(&input_data[static_cast<size_t>(offset)], s, &input_exp_head[32-exp_head_len]);
     }
+
+    const intx::uint256 exp_head = intx::be::unsafe::load<intx::uint256>(input_exp_head);
+
+
+    // intx::uint256 exp_head;
+    // bytes input;
+    // input.assign(input_data + sizeof(input_header),
+    //     input_size < sizeof(input_header) ? 0 : (input_size - sizeof(input_header)));
+    //
+    // if (input.length() > base_len)
+    // {
+    //     input.erase(0, static_cast<size_t>(base_len));
+    //     input.resize(32);
+    //     if (exp_len < 32)
+    //     {
+    //         input.erase(static_cast<size_t>(exp_len));
+    //         input.insert(0, 32 - static_cast<size_t>(exp_len), '\0');
+    //     }
+    //     exp_head = intx::be::unsafe::load<intx::uint256>(input.data());
+    // }
 
 
     unsigned bit_len{256 - clz(exp_head)};
