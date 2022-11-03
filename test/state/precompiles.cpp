@@ -113,41 +113,45 @@ PrecompileAnalysis internal_expmod_gas(
     uint8_t input_header[input_header_required_size]{};
     std::copy_n(input_data, std::min(input_size, input_header_required_size), input_header);
 
-    const auto base_len256 = intx::be::unsafe::load<intx::uint256>(&input_header[0]);
-    const auto exp_len256 = intx::be::unsafe::load<intx::uint256>(&input_header[32]);
-    const auto mod_len256 = intx::be::unsafe::load<intx::uint256>(&input_header[64]);
+    const auto base_len = intx::be::unsafe::load<intx::uint256>(&input_header[0]);
+    const auto exp_len = intx::be::unsafe::load<intx::uint256>(&input_header[32]);
+    const auto mod_len = intx::be::unsafe::load<intx::uint256>(&input_header[64]);
 
-    if (base_len256 == 0 && mod_len256 == 0)
+    if (base_len == 0 && mod_len == 0)
         return {min_gas, 0};
 
-    const auto checksum = base_len256 | exp_len256 | mod_len256;
-    const auto check2 = checksum[3] | checksum[2] | checksum[1];
-
-    if (check2 != 0)
+    static constexpr auto len_limit = std::numeric_limits<uint64_t>::max();
+    if (base_len > len_limit || exp_len > len_limit || mod_len > len_limit)
         return {GasCostMax, 0};
 
     bytes input;
     input.assign(input_data + sizeof(input_header),
         input_size < sizeof(input_header) ? 0 : (input_size - sizeof(input_header)));
+
+
     intx::uint256 exp_head{0};  // first 32 bytes of the exponent
-    if (input.length() > base_len256)
+
+
+    if (input.length() > base_len)
     {
-        input.erase(0, static_cast<size_t>(base_len256));
+        input.erase(0, static_cast<size_t>(base_len));
         if (input.size() < 3 * 32)
             input.resize(3 * 32);
-        if (exp_len256 < 32)
+        if (exp_len < 32)
         {
-            input.erase(static_cast<size_t>(exp_len256));
-            input.insert(0, 32 - static_cast<size_t>(exp_len256), '\0');
+            input.erase(static_cast<size_t>(exp_len));
+            input.insert(0, 32 - static_cast<size_t>(exp_len), '\0');
         }
         exp_head = intx::be::unsafe::load<intx::uint256>(input.data());
     }
+
+
     unsigned bit_len{256 - clz(exp_head)};
 
     intx::uint256 adjusted_exponent_len{0};
-    if (exp_len256 > 32)
+    if (exp_len > 32)
     {
-        adjusted_exponent_len = 8 * (exp_len256 - 32);
+        adjusted_exponent_len = 8 * (exp_len - 32);
     }
     if (bit_len > 1)
     {
@@ -159,26 +163,21 @@ PrecompileAnalysis internal_expmod_gas(
         adjusted_exponent_len = 1;
     }
 
-    const intx::uint256 max_length{std::max(mod_len256, base_len256)};
+    const intx::uint256 max_len = std::max(mod_len, base_len);
 
     intx::uint256 gas;
     if (rev < EVMC_BERLIN)
     {
-        gas = mult_complexity_eip198(max_length) * adjusted_exponent_len / 20;
+        gas = mult_complexity_eip198(max_len) * adjusted_exponent_len / 20;
     }
     else
     {
-        gas = mult_complexity_eip2565(max_length) * adjusted_exponent_len / 3;
+        gas = mult_complexity_eip2565(max_len) * adjusted_exponent_len / 3;
     }
 
-    if (gas > std::numeric_limits<int64_t>::max())
-    {
-        return {GasCostMax, 0};
-    }
-    else
-    {
-        return {std::max(min_gas, static_cast<int64_t>(gas)), static_cast<size_t>(mod_len256)};
-    }
+
+    return {std::max(min_gas, static_cast<int64_t>(std::min(gas, intx::uint256{GasCostMax}))),
+        static_cast<size_t>(mod_len)};
 }
 
 ExecutionResult identity_execute(const uint8_t* input, size_t input_size, uint8_t* output,
