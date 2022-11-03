@@ -81,43 +81,20 @@ PrecompileAnalysis blake2bf_analyze(const uint8_t* input, size_t input_size, evm
     return {input_size == 213 ? intx::be::unsafe::load<uint32_t>(input) : GasCostMax, 64};
 }
 
-intx::uint256 mult_complexity_eip198(const intx::uint256& x) noexcept
-{
-    const intx::uint256 x_squared{x * x};
-    if (x <= 64)
-    {
-        return x_squared;
-    }
-    else if (x <= 1024)
-    {
-        return (x_squared >> 2) + 96 * x - 3072;
-    }
-    else
-    {
-        return (x_squared >> 4) + 480 * x - 199680;
-    }
-}
-
-intx::uint256 mult_complexity_eip2565(const intx::uint256& max_length) noexcept
-{
-    const intx::uint256 words{(max_length + 7) >> 3};  // ⌈max_length/8⌉
-    return words * words;
-}
-
 PrecompileAnalysis internal_expmod_gas(
     const uint8_t* input_data, size_t input_size, evmc_revision rev) noexcept
 {
     using namespace intx;
 
-    static constexpr size_t input_header_required_size = 3 * sizeof(intx::uint256);
+    static constexpr size_t input_header_required_size = 3 * sizeof(uint256);
     const int64_t min_gas = rev < EVMC_BERLIN ? 0 : 200;
 
     uint8_t input_header[input_header_required_size]{};
     std::copy_n(input_data, std::min(input_size, input_header_required_size), input_header);
 
-    const auto base_len = intx::be::unsafe::load<intx::uint256>(&input_header[0]);
-    const auto exp_len = intx::be::unsafe::load<intx::uint256>(&input_header[32]);
-    const auto mod_len = intx::be::unsafe::load<intx::uint256>(&input_header[64]);
+    const auto base_len = be::unsafe::load<uint256>(&input_header[0]);
+    const auto exp_len = be::unsafe::load<uint256>(&input_header[32]);
+    const auto mod_len = be::unsafe::load<uint256>(&input_header[64]);
 
     if (base_len == 0 && mod_len == 0)
         return {min_gas, 0};
@@ -126,15 +103,13 @@ PrecompileAnalysis internal_expmod_gas(
     if (base_len > len_limit || exp_len > len_limit || mod_len > len_limit)
         return {GasCostMax, 0};
 
-
-    uint8_t input_exp_head[sizeof(intx::uint256)]{};
+    uint8_t input_exp_head[sizeof(uint256)]{};
 
     const auto offset = sizeof(input_header) + base_len;
     if (offset < input_size)
     {
         const auto exp_head_len = std::min(sizeof(input_exp_head), static_cast<size_t>(exp_len));
         const auto end = offset + exp_head_len;
-        // const auto s = (end > input_size)
         size_t s;
         if (end > input_size)
             s = input_size - static_cast<size_t>(offset);
@@ -144,28 +119,25 @@ PrecompileAnalysis internal_expmod_gas(
             &input_data[static_cast<size_t>(offset)], s, &input_exp_head[32 - exp_head_len]);
     }
 
-    const auto exp_head = intx::be::unsafe::load<intx::uint256>(input_exp_head);
-
-
+    const auto exp_head = be::unsafe::load<uint256>(input_exp_head);
     const auto exp_bit_width = 256 - clz(exp_head);
+    const auto adjusted_exp_len =
+        std::max(8 * (std::max(exp_len, 32_u256) - 32) + (std::max(exp_bit_width, 1u) - 1), 1_u256);
 
-    auto adjusted_exp_len =
-        8 * (std::max(exp_len, 32_u256) - 32) + (std::max(exp_bit_width, 1u) - 1);
-    adjusted_exp_len = std::max(adjusted_exp_len, intx::uint256{1});
+    static constexpr auto mult_complexity_eip2565 = [](const uint256& x) noexcept {
+        const auto w = (x + 7) >> 3;
+        return w * w;
+    };
+    static constexpr auto mult_complexity_eip198 = [](const uint256& x) noexcept {
+        const auto x2 = x * x;
+        return (x <= 64)   ? x2 :
+               (x <= 1024) ? (x2 >> 2) + 96 * x - 3072 :
+                             (x2 >> 4) + 480 * x - 199680;
+    };
 
-    const intx::uint256 max_len = std::max(mod_len, base_len);
-
-    intx::uint256 gas;
-    if (rev < EVMC_BERLIN)
-    {
-        gas = mult_complexity_eip198(max_len) * adjusted_exp_len / 20;
-    }
-    else
-    {
-        gas = mult_complexity_eip2565(max_len) * adjusted_exp_len / 3;
-    }
-
-
+    const auto max_len = std::max(mod_len, base_len);
+    const auto gas = (rev < EVMC_BERLIN) ? mult_complexity_eip198(max_len) * adjusted_exp_len / 20 :
+                                           mult_complexity_eip2565(max_len) * adjusted_exp_len / 3;
     return {std::max(min_gas, static_cast<int64_t>(std::min(gas, intx::uint256{GasCostMax}))),
         static_cast<size_t>(mod_len)};
 }
