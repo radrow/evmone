@@ -81,7 +81,7 @@ PrecompileAnalysis blake2bf_analyze(const uint8_t* input, size_t input_size, evm
     return {input_size == 213 ? intx::be::unsafe::load<uint32_t>(input) : GasCostMax, 64};
 }
 
-PrecompileAnalysis internal_expmod_gas(
+PrecompileAnalysis expmode_analyze(
     const uint8_t* input_data, size_t input_size, evmc_revision rev) noexcept
 {
     using namespace intx;
@@ -174,7 +174,7 @@ inline constexpr auto traits = []() noexcept {
         {sha256_analyze, dummy_execute<PrecompileId::sha256>},
         {ripemd160_analyze, dummy_execute<PrecompileId::ripemd160>},
         {identity_analyze, identity_execute},
-        {internal_expmod_gas, dummy_execute<PrecompileId::expmod>},
+        {expmode_analyze, dummy_execute<PrecompileId::expmod>},
         {ecadd_analyze, dummy_execute<PrecompileId::ecadd>},
         {ecmul_analyze, dummy_execute<PrecompileId::ecmul>},
         {ecpairing_analyze, dummy_execute<PrecompileId::ecpairing>},
