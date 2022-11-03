@@ -107,6 +107,8 @@ intx::uint256 mult_complexity_eip2565(const intx::uint256& max_length) noexcept
 PrecompileAnalysis internal_expmod_gas(
     const uint8_t* input_data, size_t input_size, evmc_revision rev) noexcept
 {
+    using namespace intx;
+
     static constexpr size_t input_header_required_size = 3 * sizeof(intx::uint256);
     const int64_t min_gas = rev < EVMC_BERLIN ? 0 : 200;
 
@@ -138,57 +140,29 @@ PrecompileAnalysis internal_expmod_gas(
             s = input_size - static_cast<size_t>(offset);
         else
             s = exp_head_len;
-        std::copy_n(&input_data[static_cast<size_t>(offset)], s, &input_exp_head[32-exp_head_len]);
+        std::copy_n(
+            &input_data[static_cast<size_t>(offset)], s, &input_exp_head[32 - exp_head_len]);
     }
 
-    const intx::uint256 exp_head = intx::be::unsafe::load<intx::uint256>(input_exp_head);
+    const auto exp_head = intx::be::unsafe::load<intx::uint256>(input_exp_head);
 
 
-    // intx::uint256 exp_head;
-    // bytes input;
-    // input.assign(input_data + sizeof(input_header),
-    //     input_size < sizeof(input_header) ? 0 : (input_size - sizeof(input_header)));
-    //
-    // if (input.length() > base_len)
-    // {
-    //     input.erase(0, static_cast<size_t>(base_len));
-    //     input.resize(32);
-    //     if (exp_len < 32)
-    //     {
-    //         input.erase(static_cast<size_t>(exp_len));
-    //         input.insert(0, 32 - static_cast<size_t>(exp_len), '\0');
-    //     }
-    //     exp_head = intx::be::unsafe::load<intx::uint256>(input.data());
-    // }
+    const auto exp_bit_width = 256 - clz(exp_head);
 
-
-    unsigned bit_len{256 - clz(exp_head)};
-
-    intx::uint256 adjusted_exponent_len{0};
-    if (exp_len > 32)
-    {
-        adjusted_exponent_len = 8 * (exp_len - 32);
-    }
-    if (bit_len > 1)
-    {
-        adjusted_exponent_len += bit_len - 1;
-    }
-
-    if (adjusted_exponent_len < 1)
-    {
-        adjusted_exponent_len = 1;
-    }
+    auto adjusted_exp_len =
+        8 * (std::max(exp_len, 32_u256) - 32) + (std::max(exp_bit_width, 1u) - 1);
+    adjusted_exp_len = std::max(adjusted_exp_len, intx::uint256{1});
 
     const intx::uint256 max_len = std::max(mod_len, base_len);
 
     intx::uint256 gas;
     if (rev < EVMC_BERLIN)
     {
-        gas = mult_complexity_eip198(max_len) * adjusted_exponent_len / 20;
+        gas = mult_complexity_eip198(max_len) * adjusted_exp_len / 20;
     }
     else
     {
-        gas = mult_complexity_eip2565(max_len) * adjusted_exponent_len / 3;
+        gas = mult_complexity_eip2565(max_len) * adjusted_exp_len / 3;
     }
 
 
