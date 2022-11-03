@@ -35,54 +35,50 @@ inline constexpr int64_t cost_per_input_word(size_t input_size) noexcept
     return BaseCost + WordCost * num_words(input_size);
 }
 
-inline constexpr PrecompileAnalysis ecrecover_analyze(
-    const uint8_t* /*input*/, size_t /*input_size*/, evmc_revision /*rev*/) noexcept
+PrecompileAnalysis ecrecover_analyze(bytes_view /*input*/, evmc_revision /*rev*/) noexcept
 {
     return {3000, 32};
 }
 
-PrecompileAnalysis sha256_analyze(const uint8_t*, size_t input_size, evmc_revision /*rev*/) noexcept
+PrecompileAnalysis sha256_analyze(bytes_view input, evmc_revision /*rev*/) noexcept
 {
-    return {cost_per_input_word<60, 12>(input_size), 32};
+    return {cost_per_input_word<60, 12>(input.size()), 32};
 }
 
-inline constexpr PrecompileAnalysis ripemd160_analyze(
-    const uint8_t* /*input*/, size_t input_size, evmc_revision /*rev*/) noexcept
+PrecompileAnalysis ripemd160_analyze(bytes_view input, evmc_revision /*rev*/) noexcept
 {
-    return {cost_per_input_word<600, 120>(input_size), 32};
+    return {cost_per_input_word<600, 120>(input.size()), 32};
 }
 
-PrecompileAnalysis identity_analyze(
-    const uint8_t*, size_t input_size, evmc_revision /*rev*/) noexcept
+PrecompileAnalysis identity_analyze(bytes_view input, evmc_revision /*rev*/) noexcept
 {
-    return {cost_per_input_word<15, 3>(input_size), input_size};
+    return {cost_per_input_word<15, 3>(input.size()), input.size()};
 }
 
-PrecompileAnalysis ecadd_analyze(const uint8_t*, size_t /*input_size*/, evmc_revision rev) noexcept
+PrecompileAnalysis ecadd_analyze(bytes_view /*input*/, evmc_revision rev) noexcept
 {
     return {rev >= EVMC_ISTANBUL ? 150 : 500, 64};
 }
 
-PrecompileAnalysis ecmul_analyze(const uint8_t*, size_t /*input_size*/, evmc_revision rev) noexcept
+PrecompileAnalysis ecmul_analyze(bytes_view /*input*/, evmc_revision rev) noexcept
 {
     return {rev >= EVMC_ISTANBUL ? 6000 : 40000, 64};
 }
 
-PrecompileAnalysis ecpairing_analyze(const uint8_t*, size_t input_size, evmc_revision rev) noexcept
+PrecompileAnalysis ecpairing_analyze(bytes_view input, evmc_revision rev) noexcept
 {
     const auto base_cost = (rev < EVMC_ISTANBUL) ? 100000 : 45000;
     const auto element_cost = (rev < EVMC_ISTANBUL) ? 80000 : 34000;
-    const auto num_elements = static_cast<int64_t>(input_size / 192);
+    const auto num_elements = static_cast<int64_t>(input.size() / 192);
     return {base_cost + num_elements * element_cost, 32};
 }
 
-PrecompileAnalysis blake2bf_analyze(const uint8_t* input, size_t input_size, evmc_revision) noexcept
+PrecompileAnalysis blake2bf_analyze(bytes_view input, evmc_revision) noexcept
 {
-    return {input_size == 213 ? intx::be::unsafe::load<uint32_t>(input) : GasCostMax, 64};
+    return {input.size() == 213 ? intx::be::unsafe::load<uint32_t>(input.data()) : GasCostMax, 64};
 }
 
-PrecompileAnalysis expmode_analyze(
-    const uint8_t* input_data, size_t input_size, evmc_revision rev) noexcept
+PrecompileAnalysis expmode_analyze(bytes_view input, evmc_revision rev) noexcept
 {
     using namespace intx;
 
@@ -90,7 +86,7 @@ PrecompileAnalysis expmode_analyze(
     const int64_t min_gas = rev < EVMC_BERLIN ? 0 : 200;
 
     uint8_t input_header[input_header_required_size]{};
-    std::copy_n(input_data, std::min(input_size, input_header_required_size), input_header);
+    std::copy_n(input.data(), std::min(input.size(), input_header_required_size), input_header);
 
     const auto base_len = be::unsafe::load<uint256>(&input_header[0]);
     const auto exp_len = be::unsafe::load<uint256>(&input_header[32]);
@@ -106,17 +102,16 @@ PrecompileAnalysis expmode_analyze(
     uint8_t input_exp_head[sizeof(uint256)]{};
 
     const auto offset = sizeof(input_header) + base_len;
-    if (offset < input_size)
+    if (offset < input.size())
     {
         const auto exp_head_len = std::min(sizeof(input_exp_head), static_cast<size_t>(exp_len));
         const auto end = offset + exp_head_len;
         size_t s;
-        if (end > input_size)
-            s = input_size - static_cast<size_t>(offset);
+        if (end > input.size())
+            s = input.size() - static_cast<size_t>(offset);
         else
             s = exp_head_len;
-        std::copy_n(
-            &input_data[static_cast<size_t>(offset)], s, &input_exp_head[32 - exp_head_len]);
+        std::copy_n(&input[static_cast<size_t>(offset)], s, &input_exp_head[32 - exp_head_len]);
     }
 
     const auto exp_head = be::unsafe::load<uint256>(input_exp_head);
@@ -199,24 +194,23 @@ std::optional<evmc::Result> call_precompile(evmc_revision rev, const evmc_messag
     assert(id > 0);
     assert(msg.gas >= 0);
 
-    uint8_t output_buf[256];  // Big enough to handle all "expmod" tests.
+    const auto [analyze, execute] = traits[id];
 
-    const auto t = traits[id];
-    const auto [gas_cost, max_output_size] = t.analyze(msg.input_data, msg.input_size, rev);
+    const bytes_view input{msg.input_data, msg.input_size};
+    const auto [gas_cost, max_output_size] = analyze(input, rev);
     const auto gas_left = msg.gas - gas_cost;
     if (gas_left < 0)
         return evmc::Result{EVMC_OUT_OF_GAS};
+
+    uint8_t output_buf[256];  // Big enough to handle all "expmod" tests.
     assert(std::size(output_buf) >= max_output_size);
 
     static Cache cache;
-
-    const bytes_view input{msg.input_data, msg.input_size};
-
     if (auto r = cache.find(id, input, gas_left); r.has_value())
         return r;
 
     const auto [status_code, output_size] =
-        t.execute(msg.input_data, msg.input_size, output_buf, max_output_size);
+        execute(msg.input_data, msg.input_size, output_buf, max_output_size);
 
     evmc::Result result{
         status_code, status_code == EVMC_SUCCESS ? gas_left : 0, 0, output_buf, output_size};
